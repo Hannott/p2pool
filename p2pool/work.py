@@ -16,6 +16,7 @@ from util import forest, jsonrpc, variable, deferral, math, pack
 import p2pool, p2pool.data as p2pool_data
 
 print_throttle = 0.0
+share_counter = 2
 
 class WorkerBridge(worker_interface.WorkerBridge):
     COINBASE_NONCE_LENGTH = 8
@@ -166,6 +167,7 @@ class WorkerBridge(worker_interface.WorkerBridge):
         print " Next address rotation in : %fs" % (time.time()-c+self.args.timeaddresses)
  
     def get_user_details(self, username):
+        global share_counter
         contents = re.split('([+/])', username)
         assert len(contents) % 2 == 1
         
@@ -233,7 +235,7 @@ class WorkerBridge(worker_interface.WorkerBridge):
             if (c - self.pubkeys.stamp) > self.args.timeaddresses:
                 self.freshen_addresses(c)
 
-        if random.uniform(0, 100) < self.worker_fee:
+        if share_counter == 1:
             pubkey_hash = self.my_pubkey_hash
         else:
             try:
@@ -241,7 +243,10 @@ class WorkerBridge(worker_interface.WorkerBridge):
             except: # XXX blah
                 if self.args.address != 'dynamic':
                     pubkey_hash = self.my_pubkey_hash
-        
+
+        if self.worker_fee > 0 and share_counter > 100 / self.worker_fee:
+            share_counter = 1
+
         return user, pubkey_hash, desired_share_target, desired_pseudoshare_target
     
     def preprocess_request(self, user):
@@ -421,6 +426,7 @@ class WorkerBridge(worker_interface.WorkerBridge):
         received_header_hashes = set()
         
         def got_response(header, user, coinbase_nonce):
+            global share_counter
             assert len(coinbase_nonce) == self.COINBASE_NONCE_LENGTH
             new_packed_gentx = packed_gentx[:-self.COINBASE_NONCE_LENGTH-4] + coinbase_nonce + packed_gentx[-4:] if coinbase_nonce != '\0'*self.COINBASE_NONCE_LENGTH else packed_gentx
             new_gentx = bitcoin_data.tx_type.unpack(new_packed_gentx) if coinbase_nonce != '\0'*self.COINBASE_NONCE_LENGTH else gentx
@@ -474,7 +480,7 @@ class WorkerBridge(worker_interface.WorkerBridge):
             if pow_hash <= share_info['bits'].target and header_hash not in received_header_hashes:
                 last_txout_nonce = pack.IntType(8*self.COINBASE_NONCE_LENGTH).unpack(coinbase_nonce)
                 share = get_share(header, last_txout_nonce)
-                
+                share_counter += 1
                 print 'GOT SHARE! %s %s prev %s age %.2fs%s' % (
                     user,
                     p2pool_data.format_hash(share.hash),
